@@ -9,8 +9,9 @@ import (
 
 func main() {
 	cfg := p2p.ServerConfig{
-		ListenAddr: ":3000",
-		Version:    "POKERGG V0.1-alpha",
+		ListenAddr:  ":3000",
+		Version:     "POKERGG V0.1-alpha",
+		GameVariant: p2p.TexasHoldem,
 	}
 	server := p2p.NewServer(cfg)
 	go server.Start()

@@ -1,50 +1,60 @@
 package p2p
 
 import (
-	"bytes"
 	"fmt"
-	"io"
 	"net"
+
+	"github.com/sirupsen/logrus"
 )
 
-type Peer struct {
-	conn net.Conn
-}
+type GameVariant uint8
 
-func (p *Peer) Send(data []byte) error {
-	_, err := p.conn.Write(data)
-	return err
+const (
+	TexasHoldem GameVariant = iota
+	Other
+)
+
+func (gv GameVariant) String() string {
+	switch gv {
+	case TexasHoldem:
+		return "Texas Hold'em"
+	default:
+		return "Unknown"
+	}
 }
 
 type ServerConfig struct {
-	ListenAddr string
-	Version    string
-}
-
-type Message struct {
-	Payload io.Reader
-	From    net.Addr
+	ListenAddr  string
+	Version     string
+	GameVariant GameVariant
 }
 
 type Server struct {
 	ServerConfig
 
-	handler  Handler
-	listener net.Listener
-	peers    map[net.Addr]*Peer
-	addPeer  chan *Peer
-	delPeer  chan *Peer
-	msgCh    chan *Message
+	transport *TCPTransport
+	peers     map[net.Addr]*Peer
+	addPeer   chan *Peer
+	delPeer   chan *Peer
+	msgCh     chan *Message
 }
 
 func NewServer(cfg ServerConfig) *Server {
-	return &Server{
+	s := &Server{
 		ServerConfig: cfg,
 		peers:        make(map[net.Addr]*Peer),
 		addPeer:      make(chan *Peer),
-		handler:      &DefaultHandler{},
+		delPeer:      make(chan *Peer),
 		msgCh:        make(chan *Message),
 	}
+
+	tr := NewTCPTransport(s.ListenAddr)
+	s.transport = tr
+
+	tr.AddPeer = s.addPeer
+	tr.DelPeer = s.delPeer
+
+	return s
 }
 
 // TODO: redundant code in Connect and acceptLoop
@@ -60,66 +70,24 @@ func (s *Server) Connect(addr string) error {
 
 	s.addPeer <- peer
 
-	return peer.Send([]byte(fmt.Sprintf("%s\n", s.Version)))
+	err = peer.Send([]byte(s.Version))
+	if err != nil {
+		panic(err)
+	}
+	return err
 }
 
 func (s *Server) Start() {
 	go s.loop()
 
-	if err := s.listen(); err != nil {
+	logrus.WithFields(logrus.Fields{
+		"addr": s.ListenAddr,
+		"type": s.GameVariant,
+	}).Info("started new game server")
+	err := s.transport.ListenAndAccept()
+	if err != nil {
 		panic(err)
 	}
-
-	fmt.Printf("game server running on %s\n", s.ListenAddr)
-
-	s.acceptLoop()
-}
-
-func (s *Server) acceptLoop() {
-	for {
-		conn, err := s.listener.Accept()
-		if err != nil {
-			panic(err)
-		}
-
-		peer := &Peer{
-			conn: conn,
-		}
-
-		s.addPeer <- peer
-
-		peer.Send([]byte(fmt.Sprintf("%s\n", s.Version)))
-
-		go s.handleConn(peer)
-	}
-}
-
-func (s *Server) handleConn(peer *Peer) {
-	buf := make([]byte, 1024)
-	for {
-		n, err := peer.conn.Read(buf)
-		if err != nil {
-			break
-		}
-
-		s.msgCh <- &Message{
-			Payload: bytes.NewReader(buf[:n]),
-			From:    peer.conn.RemoteAddr(),
-		}
-	}
-
-	s.delPeer <- peer
-}
-
-func (s *Server) listen() error {
-	ln, err := net.Listen("tcp", s.ListenAddr)
-	if err != nil {
-		return err
-	}
-
-	s.listener = ln
-
-	return nil
 }
 
 func (s *Server) loop() {
@@ -128,15 +96,26 @@ func (s *Server) loop() {
 		select {
 		case peer := <-s.delPeer:
 			addr := peer.conn.RemoteAddr()
+			logrus.WithFields(logrus.Fields{
+				"addr": addr,
+			}).Info("player disconnected")
 			delete(s.peers, addr)
-			fmt.Printf("player disconnected %s\n", addr)
 		case peer := <-s.addPeer:
-			fmt.Printf("new player connected %s\n", peer.conn.RemoteAddr())
+			// TODO: Check max players and other game state logic
+			logrus.WithFields(logrus.Fields{
+				"addr": peer.conn.RemoteAddr(),
+			}).Info("new player connected")
+			go peer.ReadLoop(s.msgCh)
 			s.peers[peer.conn.RemoteAddr()] = peer
 		case msg := <-s.msgCh:
-			if err := s.handler.HandleMessage(msg); err != nil {
+			if err := s.HandleMessage(msg); err != nil {
 				panic(err)
 			}
 		}
 	}
+}
+
+func (s *Server) HandleMessage(msg *Message) error {
+	fmt.Printf("%+v\n", msg)
+	return nil
 }
