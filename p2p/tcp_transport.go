@@ -2,20 +2,14 @@ package p2p
 
 import (
 	"bytes"
-	"fmt"
-	"io"
 	"net"
 
 	"github.com/sirupsen/logrus"
 )
 
 type Peer struct {
-	conn net.Conn
-}
-
-type Message struct {
-	Payload io.Reader
-	From    net.Addr
+	conn     net.Conn
+	outbound bool
 }
 
 func (p *Peer) Send(data []byte) error {
@@ -69,9 +63,9 @@ func (t *TCPTransport) ListenAndAccept() error {
 		}
 
 		peer := &Peer{
-			conn: conn,
+			conn:     conn,
+			outbound: false,
 		}
 		t.AddPeer <- peer
 	}
-	return fmt.Errorf("TCP transport stopped with reason: ?")
 }

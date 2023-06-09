@@ -19,13 +19,12 @@ func main() {
 	time.Sleep(1 * time.Second)
 
 	remoteCfg := p2p.ServerConfig{
-		ListenAddr: ":4000",
-		Version:    "POKERGG V0.1-alpha",
+		ListenAddr:  ":4000",
+		Version:     "POKERGG V0.1-alpha",
+		GameVariant: p2p.TexasHoldem,
 	}
-
 	remoteServer := p2p.NewServer(remoteCfg)
 	go remoteServer.Start()
-
 	if err := remoteServer.Connect("localhost:3000"); err != nil {
 		fmt.Println(err)
 	}
